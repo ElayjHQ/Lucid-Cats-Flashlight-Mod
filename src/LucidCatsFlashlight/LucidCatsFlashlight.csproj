@@ -68,7 +68,7 @@
        repo's package payload so the installer always ships the latest DLL. -->
   <Target Name="InstallToPlugins" AfterTargets="Build" Condition="Exists('$(GameDir)\BepInEx\core')">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins\" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildThisFileDirectory)..\package\LucidCatsFlashlightMod\BepInEx\plugins\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildThisFileDirectory)..\..\package\LucidCatsFlashlightMod\BepInEx\plugins\" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>
