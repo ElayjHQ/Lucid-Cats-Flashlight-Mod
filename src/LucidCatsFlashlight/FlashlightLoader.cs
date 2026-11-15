@@ -374,6 +374,13 @@ public class FlashlightLoader : MonoBehaviour
                     _rigs[id] = rig;
                 }
 
+                // Remote rigs that couldn't reach the hand yet keep retrying: the body
+                // can load after the rig is created.
+                if (rig != null && !rig.IsLocal && !rig.HandAttached && TryAttachToHand(rig.gameObject, player))
+                {
+                    rig.HandAttached = true;
+                }
+
                 // Keep rig visuals in sync with known state + spectating.
                 rig.SetOn(_states.TryGetValue(id, out var s) && s);
                 rig.gameObject.SetActive(player.SleepManager == null || !player.SleepManager.IsSpectating);
@@ -389,6 +396,7 @@ public class FlashlightLoader : MonoBehaviour
     {
         bool isLocal = player.IsOwner;
         var rigGo = new GameObject("LCF_FlashlightRig");
+        bool attached = false;
 
         if (isLocal && player.mainCam != null)
         {
@@ -397,61 +405,165 @@ public class FlashlightLoader : MonoBehaviour
                 FlashlightPlugin.LocalRight.Value,
                 -FlashlightPlugin.LocalDown.Value,
                 FlashlightPlugin.LocalForward.Value);
-            rigGo.transform.localRotation = Quaternion.identity;
+            rigGo.transform.localRotation = Quaternion.Euler(0f, FlashlightPlugin.LocalYaw.Value, 0f);
         }
         else
         {
-            // Remote players: anchor at a front paw of their cat model, so the
-            // flashlight sits low at the ground line, held in the paw.
-            Transform anchor = FindPawAnchor(player, out Vector3 localPos);
-
-            // Fine-tune nudges from config (yaw-rotated so they track the beam).
-            Quaternion yawRot = Quaternion.Euler(0f, FlashlightPlugin.RemoteYaw.Value, 0f);
-            localPos += yawRot * new Vector3(
-                FlashlightPlugin.RemoteRight.Value,
-                0f,
-                FlashlightPlugin.RemoteForward.Value);
-
-            rigGo.transform.SetParent(anchor, false);
-            rigGo.transform.localPosition = localPos;
-            rigGo.transform.localRotation = Quaternion.Euler(
-                FlashlightPlugin.RemotePitch.Value,
-                FlashlightPlugin.RemoteYaw.Value,
-                0f);
+            // Remote players: hold the flashlight in the cat's right hand so it follows
+            // the arm. If the body isn't loaded yet, a point beside the cat stands in and
+            // MaintainRigs keeps retrying the hand.
+            attached = TryAttachToHand(rigGo, player);
+            if (!attached)
+            {
+                Transform anchor = FindHandAnchor(player, out Vector3 localPos);
+                rigGo.transform.SetParent(anchor, false);
+                rigGo.transform.localPosition = localPos;
+                rigGo.transform.localRotation = Quaternion.Euler(
+                    -FlashlightPlugin.RemotePitch.Value,
+                    FlashlightPlugin.RemoteYaw.Value,
+                    0f);
+            }
         }
 
         var rig = rigGo.AddComponent<FlashlightRig>();
         rig.Init(player);
+        rig.HandAttached = attached;
         FlashlightPlugin.Log.LogDebug($"Rig created for {(isLocal ? "local" : "remote")} player {player.OwnerClientId}.");
         return rig;
     }
 
     /// <summary>
-    /// Finds a "held in the paw" anchor: near the ground at the front-right of
-    /// the cat model, derived from the model's renderer bounds.
+    /// Parents a remote player's flashlight to their right hand, aimed along the
+    /// cat's facing with the grip at the palm. Returns false while no hand is found.
     /// </summary>
-    private static Transform FindPawAnchor(PlayerManager player, out Vector3 localPos)
+    private static bool TryAttachToHand(GameObject rigGo, PlayerManager player)
+    {
+        Transform hand = FindHandBone(player);
+        if (hand == null)
+        {
+            return false;
+        }
+
+        rigGo.transform.SetParent(hand, false);
+        rigGo.transform.localPosition = Vector3.zero;
+        rigGo.transform.localRotation = Quaternion.identity;
+
+        // Compensate for bone scale so the flashlight keeps its real size.
+        var ls = hand.lossyScale;
+        if (ls.x > 0.0001f && ls.y > 0.0001f && ls.z > 0.0001f)
+        {
+            rigGo.transform.localScale = new Vector3(1f / ls.x, 1f / ls.y, 1f / ls.z);
+        }
+
+        // Aim along the cat's facing; RemoteForward and RemoteRight nudge from the wrist.
+        Transform body = player.transform;
+        rigGo.transform.rotation = body.rotation *
+            Quaternion.Euler(-FlashlightPlugin.RemotePitch.Value, FlashlightPlugin.RemoteYaw.Value, 0f);
+        rigGo.transform.position += body.forward * FlashlightPlugin.RemoteForward.Value +
+            body.right * FlashlightPlugin.RemoteRight.Value;
+
+        FlashlightPlugin.Log.LogInfo($"Flashlight held in '{hand.name}' for player {player.OwnerClientId}.");
+        return true;
+    }
+
+    /// <summary>
+    /// Finds the cat's right hand: the humanoid RightHand bone when the rig has an
+    /// avatar, otherwise the best hand-like bone name in its hierarchy.
+    /// </summary>
+    private static Transform FindHandBone(PlayerManager player)
+    {
+        var animator = player.GetComponentInChildren<Animator>(true);
+        if (animator == null)
+        {
+            return null;
+        }
+
+        if (animator.isHuman)
+        {
+            Transform humanHand = animator.GetBoneTransform(HumanBodyBones.RightHand);
+            if (humanHand != null)
+            {
+                return humanHand;
+            }
+        }
+
+        var transforms = animator.GetComponentsInChildren<Transform>(true);
+
+        Transform best = null;
+        int bestScore = int.MinValue;
+        foreach (var t in transforms)
+        {
+            string n = t.name.ToLowerInvariant();
+            int score;
+            if (n.Contains("hand") || n.Contains("paw"))
+            {
+                score = 100;
+            }
+            else if (n.Contains("wrist"))
+            {
+                score = 90;
+            }
+            else if (n.Contains("forearm"))
+            {
+                score = 55;
+            }
+            else if (n.Contains("arm"))
+            {
+                score = 60;
+            }
+            else
+            {
+                continue;
+            }
+
+            bool right = n.Contains("_r") || n.Contains(".r") || n.Contains("right") ||
+                         (n.Length > 1 && n[n.Length - 1] == 'r' && !char.IsLetter(n[n.Length - 2]));
+            if (right)
+            {
+                score += 30;
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = t;
+            }
+        }
+
+        if (best != null)
+        {
+            FlashlightPlugin.Log.LogInfo($"[Flashlight] Hand bone candidate: '{best.name}'");
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// Fallback "held in hand" anchor for biped cats: hip height at the side of
+    /// the body, computed in model space so it follows the cat's facing.
+    /// </summary>
+    private static Transform FindHandAnchor(PlayerManager player, out Vector3 localPos)
     {
         var model = player.PlayerModel;
         if (model == null)
         {
-            localPos = new Vector3(0.3f, 0.1f, 0.3f);
+            localPos = new Vector3(0.3f, 0.6f, 0.05f);
             return player.transform;
         }
 
         var renderer = model.GetComponentInChildren<Renderer>(true);
         if (renderer == null)
         {
-            localPos = new Vector3(0f, 0.08f, 0.35f);
+            localPos = new Vector3(0f, 0.55f, 0.08f);
             return model;
         }
 
         var b = renderer.bounds;
-        Vector3 pawWorld = b.center
-            + Vector3.up * (-b.extents.y * 0.85f)      // paw height: near the ground
-            + Vector3.forward * (b.extents.z * 0.45f); // front third of the body
-        localPos = model.InverseTransformPoint(pawWorld);
-        localPos.y += 0.05f;                           // held slightly above the floor
+        Vector3 handWorld = b.center
+            - Vector3.up * (b.extents.y * 0.25f)          // hip height, just below center
+            + model.right * (b.extents.x * 0.55f)         // at the side of the body
+            + model.forward * 0.02f;                      // barely in front
+        localPos = model.InverseTransformPoint(handWorld);
         return model;
     }
 }

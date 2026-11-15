@@ -15,11 +15,15 @@ public class FlashlightRig : MonoBehaviour
     public PlayerManager Player { get; private set; }
     public ulong OwnerId { get; private set; }
     public bool IsLocal { get; private set; }
+    public bool HandAttached { get; set; }
 
     private Light _spot;
     private VolumetricLightBeamSD _beam;
     private bool _beamBroken;
     private FlashlightViewModel _viewModel;
+    private AudioSource _sound;
+    private bool _lastOn;
+    private bool _soundInitialized;
     private Renderer[] _ownShadowRenderers;
     private UnityEngine.Rendering.ShadowCastingMode[] _originalShadowModes;
 
@@ -52,10 +56,10 @@ public class FlashlightRig : MonoBehaviour
             try
             {
                 // Local: extends back from the rig origin so the lens sits ahead.
-                // Remote: sits at the paw with the body trailing toward the cat.
+                // Remote: the body's centre sits on the hand, so the lens points forward from the palm.
                 Vector3 modelPos = IsLocal
                     ? new Vector3(0f, 0f, 0.02f)
-                    : new Vector3(0f, -0.02f, -0.08f);
+                    : new Vector3(0f, 0f, -0.026f);
                 _viewModel = FlashlightViewModel.Build(
                     transform, modelPos, FlashlightPlugin.ModelScale.Value, IsLocal, player);
                 _viewModel.gameObject.SetActive(false); // starts off
@@ -88,6 +92,23 @@ public class FlashlightRig : MonoBehaviour
         _spot.shadowStrength = 0.85f;
         _spot.enabled = false; // starts off
 
+        // Toggle click sound on the rig root (which never gets deactivated by
+        // on/off): if it lived under the model, switching OFF would hide the
+        // AudioSource before the close click could play. Spatialized from the
+        // flashlight position: friends hear it from your cat, you hear it from
+        // beside you.
+        _sound = gameObject.AddComponent<AudioSource>();
+        _sound.playOnAwake = false;
+        _sound.spatialBlend = 1f;
+        _sound.rolloffMode = AudioRolloffMode.Linear;
+        _sound.minDistance = 1.5f;
+        _sound.maxDistance = 20f;
+        _sound.volume = FlashlightPlugin.Volume.Value;
+        if (FlashlightPlugin.Sound.Value)
+        {
+            FlashlightSound.LoadAsync(this);
+        }
+
         // Volumetric cone using the game's own VLB asset. Best-effort: if it fails,
         // the plain spotlight still works. Tuned subtle so the camera doesn't sit
         // inside a giant white dome.
@@ -118,6 +139,9 @@ public class FlashlightRig : MonoBehaviour
 
     public void SetOn(bool on)
     {
+        // Apply visual states FIRST: the sound below must play while the model /
+        // optics GameObject is active, or Unity silently ignores PlayOneShot
+        // on an inactive AudioSource.
         if (_spot != null)
         {
             _spot.enabled = on;
@@ -141,17 +165,48 @@ public class FlashlightRig : MonoBehaviour
             }
         }
 
-        if (_viewModel != null)
-        {
-            _viewModel.gameObject.SetActive(on);
-        }
-
         if (_beam != null && !_beamBroken)
         {
             _beam.enabled = on;
             if (on)
             {
                 StartCoroutine(CheckBeamGeometry());
+            }
+        }
+
+        // The model's visibility is animated by the viewmodel: on a real state
+        // change it spins into place or dissolves away. The first application
+        // per rig (spawn / late-join sync) applies instantly and silently.
+        if (!_soundInitialized)
+        {
+            _soundInitialized = true;
+            _lastOn = on;
+            if (_viewModel != null)
+            {
+                _viewModel.ApplyInstant(on);
+            }
+        }
+        else if (on != _lastOn)
+        {
+            _lastOn = on;
+            if (_viewModel != null)
+            {
+                _viewModel.PlayToggle(on); // activates the model synchronously when appearing
+            }
+
+            if (FlashlightPlugin.Sound.Value && _sound != null && FlashlightSound.TryGetClips(out var openClip, out var closeClip))
+            {
+                var clip = on ? openClip : closeClip;
+                if (clip == null)
+                {
+                    clip = openClip != null ? openClip : closeClip; // fall back to whichever exists
+                }
+
+                if (clip != null)
+                {
+                    _sound.volume = FlashlightPlugin.Volume.Value;
+                    _sound.PlayOneShot(clip);
+                }
             }
         }
     }

@@ -38,6 +38,26 @@
       <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.ParticleSystemModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AudioModule">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.AudioModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.UnityWebRequestModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestAudioModule">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.UnityWebRequestAudioModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Unity.InputSystem">
       <HintPath>$(GameDir)\LucidCats_Data\Managed\Unity.InputSystem.dll</HintPath>
       <Private>false</Private>
@@ -72,7 +92,11 @@
        repo's package payload so the installer always ships the latest DLL. -->
   <Target Name="InstallToPlugins" AfterTargets="Build" Condition="Exists('$(GameDir)\BepInEx\core')">
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(GameDir)\BepInEx\plugins\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)Audio\flashlight_open.mp3" DestinationFolder="$(GameDir)\BepInEx\plugins\LucidCatsFlashlight\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)Audio\flashlight_close.mp3" DestinationFolder="$(GameDir)\BepInEx\plugins\LucidCatsFlashlight\" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildThisFileDirectory)..\..\package\LucidCatsFlashlightMod\BepInEx\plugins\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)Audio\flashlight_open.mp3" DestinationFolder="$(MSBuildThisFileDirectory)..\..\package\LucidCatsFlashlightMod\BepInEx\plugins\LucidCatsFlashlight\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)Audio\flashlight_close.mp3" DestinationFolder="$(MSBuildThisFileDirectory)..\..\package\LucidCatsFlashlightMod\BepInEx\plugins\LucidCatsFlashlight\" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>

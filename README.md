@@ -2,14 +2,14 @@
 
 A fan-made mod for [Lucid Cats](https://store.steampowered.com/app/4778540/Lucid_Cats/) that adds a **flashlight** to the game.
 
-Press **F** in-game to toggle a warm flashlight beam from your paw — volumetric cone included — and everyone else in your lobby sees it too, synced through the game's own networking.
+Press **F** in-game to summon a warm flashlight that floats beside you — volumetric cone included — and everyone else in your lobby sees it too, synced through the game's own networking.
 
 ## Features
 
 - **F to toggle** your flashlight (only during real gameplay — no accidental toggles while typing in the laptop)
 - **Visible to everyone** in the lobby, synced via Netcode for GameObjects custom messages (host relays, late joiners get the current state)
 - **Volumetric light cone** using the game's own Volumetric Light Beam asset, so it fits the game's look
-- **Held-in-paw placement** — the beam originates beside your view like a carried torch, not a headlamp
+- **Floating dream-artifact styling** — the torch hovers beside you with a gentle bob, a pulsing glow and motes falling away beneath it; it spins into place when toggled on and dissolves away when toggled off
 - **Tunable via config file** — brightness, range, cone width, shadows, beam opacity, offsets; no rebuild needed
 - Handles the game's scene changes: players despawning/respawning between the lobby and dream levels keep their flashlight state
 
@@ -55,13 +55,20 @@ After your first launch, edit `BepInEx\config\lucidcats.flashlight.cfg` (with th
 | `Shadows` | `true` | Flashlight shadow casting |
 | `Beam` | `true` | Show the visible volumetric cone (`false` = plain spotlight) |
 | `BeamIntensity` | `0.35` | Cone opacity (0 = invisible, 1 = solid) |
-| `LocalRight` | `0.35` | Beam origin offset to your right (the "held in paw" feel) |
-| `LocalDown` | `0.12` | Beam origin offset below your camera |
-| `LocalForward` | `0.28` | Beam origin offset in front of your camera |
-| `RemoteHeight` | `0.4` | Other players' beam origin height on their model |
-| `RemoteForward` | `0.35` | Other players' beam origin, forward offset |
-| `RemoteYaw` | `0` | Other players' beam yaw (try `180` if a beam points backwards) |
-| `RemotePitch` | `-5` | Other players' beam pitch (negative = slightly down) |
+| `Effects` | `true` | Floating-flashlight effects: hover, glow, motes |
+| `GlowIntensity` | `1.2` | Strength of the pulsing glow (0 = off) |
+| `Sound` | `true` | Click sound on toggle |
+| `Volume` | `0.45` | Click volume (0-1) |
+| `ShowModel` | `true` | Show the 3D floating flashlight |
+| `ModelScale` | `1` | Flashlight size multiplier |
+| `LocalRight` | `0.28` | Floating flashlight offset to your right |
+| `LocalDown` | `0.16` | Floating flashlight offset below your camera (higher = lower in view) |
+| `LocalForward` | `0.42` | Floating flashlight offset in front of your camera |
+| `LocalYaw` | `-6` | Floating flashlight aim in degrees (negative = toward the screen centre) |
+| `RemoteRight` | `0` | Other players' flashlight: sideways nudge from their right hand |
+| `RemoteForward` | `0.05` | Other players' flashlight: forward nudge from their right hand |
+| `RemoteYaw` | `0` | Other players' flashlight yaw (try `180` if it points backwards) |
+| `RemotePitch` | `-5` | Other players' flashlight pitch (negative = down) |
 
 ## Uninstall
 
