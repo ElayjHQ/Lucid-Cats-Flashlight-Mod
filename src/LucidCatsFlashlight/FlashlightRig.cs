@@ -19,6 +19,7 @@ public class FlashlightRig : MonoBehaviour
     private Light _spot;
     private VolumetricLightBeamSD _beam;
     private bool _beamBroken;
+    private FlashlightViewModel _viewModel;
     private Renderer[] _ownShadowRenderers;
     private UnityEngine.Rendering.ShadowCastingMode[] _originalShadowModes;
 
@@ -27,17 +28,6 @@ public class FlashlightRig : MonoBehaviour
         Player = player;
         OwnerId = player.OwnerClientId;
         IsLocal = player.IsOwner;
-
-        _spot = gameObject.AddComponent<Light>();
-        _spot.type = LightType.Spot;
-        _spot.color = new Color(1f, 0.93f, 0.8f); // warm white
-        _spot.intensity = FlashlightPlugin.Intensity.Value;
-        _spot.range = FlashlightPlugin.Range.Value;
-        _spot.spotAngle = Mathf.Clamp(FlashlightPlugin.Angle.Value, 10f, 120f);
-        _spot.innerSpotAngle = _spot.spotAngle * 0.65f;
-        _spot.shadows = FlashlightPlugin.CastShadows.Value ? LightShadows.Soft : LightShadows.None;
-        _spot.shadowStrength = 0.85f;
-        _spot.enabled = false; // starts off
 
         // The local cat's own model is invisible to its camera but still casts
         // shadows - which turns into a giant dark dome in front of the player
@@ -53,6 +43,51 @@ public class FlashlightRig : MonoBehaviour
             }
         }
 
+        // Held flashlight model (procedural, PSX-style). Built first: it exposes
+        // the lens tip where the light + beam get mounted.
+        Transform opticsParent = transform;
+        Vector3 opticsLocalPos = Vector3.zero;
+        if (FlashlightPlugin.ShowModel.Value)
+        {
+            try
+            {
+                // Local: extends back from the rig origin so the lens sits ahead.
+                // Remote: sits at the paw with the body trailing toward the cat.
+                Vector3 modelPos = IsLocal
+                    ? new Vector3(0f, 0f, 0.02f)
+                    : new Vector3(0f, -0.02f, -0.08f);
+                _viewModel = FlashlightViewModel.Build(
+                    transform, modelPos, FlashlightPlugin.ModelScale.Value, IsLocal, player);
+                _viewModel.gameObject.SetActive(false); // starts off
+
+                opticsParent = _viewModel.LensTip.parent;
+                opticsLocalPos = _viewModel.LensTip.localPosition;
+            }
+            catch (Exception e)
+            {
+                FlashlightPlugin.Log.LogWarning($"Flashlight model could not be created ({e.Message}).");
+                _viewModel = null;
+            }
+        }
+
+        // Optics node: the light and volumetric cone live exactly at the lens
+        // face, so the beam starts at the lens instead of behind the model.
+        var optics = new GameObject("LCF_Optics");
+        optics.transform.SetParent(opticsParent, false);
+        optics.transform.localPosition = opticsLocalPos;
+        optics.transform.localRotation = Quaternion.identity;
+
+        _spot = optics.AddComponent<Light>();
+        _spot.type = LightType.Spot;
+        _spot.color = new Color(1f, 0.93f, 0.8f); // warm white
+        _spot.intensity = FlashlightPlugin.Intensity.Value;
+        _spot.range = FlashlightPlugin.Range.Value;
+        _spot.spotAngle = Mathf.Clamp(FlashlightPlugin.Angle.Value, 10f, 120f);
+        _spot.innerSpotAngle = _spot.spotAngle * 0.65f;
+        _spot.shadows = FlashlightPlugin.CastShadows.Value ? LightShadows.Soft : LightShadows.None;
+        _spot.shadowStrength = 0.85f;
+        _spot.enabled = false; // starts off
+
         // Volumetric cone using the game's own VLB asset. Best-effort: if it fails,
         // the plain spotlight still works. Tuned subtle so the camera doesn't sit
         // inside a giant white dome.
@@ -60,7 +95,7 @@ public class FlashlightRig : MonoBehaviour
         {
             try
             {
-                _beam = gameObject.AddComponent<VolumetricLightBeamSD>();
+                _beam = optics.AddComponent<VolumetricLightBeamSD>();
                 _beam.trackChangesDuringPlaytime = true; // follow light property changes
                 _beam.coneRadiusStart = 0.05f;           // narrow throat, less near-camera shell
                 _beam.intensityFromLight = false;        // decouple cone opacity from light power
@@ -104,6 +139,11 @@ public class FlashlightRig : MonoBehaviour
                     ? UnityEngine.Rendering.ShadowCastingMode.Off
                     : _originalShadowModes[i];
             }
+        }
+
+        if (_viewModel != null)
+        {
+            _viewModel.gameObject.SetActive(on);
         }
 
         if (_beam != null && !_beamBroken)

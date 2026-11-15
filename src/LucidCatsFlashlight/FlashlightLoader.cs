@@ -401,8 +401,17 @@ public class FlashlightLoader : MonoBehaviour
         }
         else
         {
-            // Remote players: anchor near the head of their cat model.
-            Transform anchor = FindHeadAnchor(player, out Vector3 localPos);
+            // Remote players: anchor at a front paw of their cat model, so the
+            // flashlight sits low at the ground line, held in the paw.
+            Transform anchor = FindPawAnchor(player, out Vector3 localPos);
+
+            // Fine-tune nudges from config (yaw-rotated so they track the beam).
+            Quaternion yawRot = Quaternion.Euler(0f, FlashlightPlugin.RemoteYaw.Value, 0f);
+            localPos += yawRot * new Vector3(
+                FlashlightPlugin.RemoteRight.Value,
+                0f,
+                FlashlightPlugin.RemoteForward.Value);
+
             rigGo.transform.SetParent(anchor, false);
             rigGo.transform.localPosition = localPos;
             rigGo.transform.localRotation = Quaternion.Euler(
@@ -417,36 +426,32 @@ public class FlashlightLoader : MonoBehaviour
         return rig;
     }
 
-    private static Transform FindHeadAnchor(PlayerManager player, out Vector3 localPos)
+    /// <summary>
+    /// Finds a "held in the paw" anchor: near the ground at the front-right of
+    /// the cat model, derived from the model's renderer bounds.
+    /// </summary>
+    private static Transform FindPawAnchor(PlayerManager player, out Vector3 localPos)
     {
         var model = player.PlayerModel;
         if (model == null)
         {
-            localPos = new Vector3(0f, 0.6f, 0.4f);
+            localPos = new Vector3(0.3f, 0.1f, 0.3f);
             return player.transform;
         }
 
-        // 1) Prefer a real head bone if the rig has one.
-        var transforms = model.GetComponentsInChildren<Transform>(true);
-        foreach (var t in transforms)
-        {
-            if (t.name.ToLowerInvariant().Contains("head"))
-            {
-                localPos = new Vector3(0f, 0.05f, 0.1f);
-                return t;
-            }
-        }
-
-        // 2) Fall back to a point derived from the model's renderer bounds.
-        localPos = new Vector3(0f, FlashlightPlugin.RemoteHeight.Value * 0.5f, FlashlightPlugin.RemoteForward.Value);
         var renderer = model.GetComponentInChildren<Renderer>(true);
-        if (renderer != null)
+        if (renderer == null)
         {
-            var b = renderer.bounds;
-            Vector3 headWorld = b.center + Vector3.up * (b.extents.y * (FlashlightPlugin.RemoteHeight.Value * 2f - 1f) * 0.5f);
-            localPos = model.InverseTransformPoint(headWorld) + new Vector3(0f, 0f, FlashlightPlugin.RemoteForward.Value);
+            localPos = new Vector3(0f, 0.08f, 0.35f);
+            return model;
         }
 
+        var b = renderer.bounds;
+        Vector3 pawWorld = b.center
+            + Vector3.up * (-b.extents.y * 0.85f)      // paw height: near the ground
+            + Vector3.forward * (b.extents.z * 0.45f); // front third of the body
+        localPos = model.InverseTransformPoint(pawWorld);
+        localPos.y += 0.05f;                           // held slightly above the floor
         return model;
     }
 }

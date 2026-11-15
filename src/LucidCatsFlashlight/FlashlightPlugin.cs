@@ -11,7 +11,7 @@ public class FlashlightPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "lucidcats.flashlight";
     public const string PluginName = "Lucid Cats Flashlight";
-    public const string PluginVersion = "1.0.0";
+    public const string PluginVersion = "1.1.0";
 
     internal static ManualLogSource Log;
 
@@ -25,14 +25,18 @@ public class FlashlightPlugin : BaseUnityPlugin
     // Volumetric cone appearance
     internal static ConfigEntry<float> BeamIntensity;
 
+    // Held model
+    internal static ConfigEntry<bool> ShowModel;
+    internal static ConfigEntry<float> ModelScale;
+    internal static ConfigEntry<float> RemoteRight;
+
     // Local (own) beam placement, in camera space
     internal static ConfigEntry<float> LocalRight;
     internal static ConfigEntry<float> LocalDown;
     internal static ConfigEntry<float> LocalForward;
 
     // Remote (other players') beam placement, relative to their cat model
-    internal static ConfigEntry<float> RemoteHeight;   // fraction of model height above center
-    internal static ConfigEntry<float> RemoteForward;  // meters in front of model center
+    internal static ConfigEntry<float> RemoteForward;   // extra forward offset from paw anchor
     internal static ConfigEntry<float> RemoteYaw;      // degrees, in case the model faces -Z
     internal static ConfigEntry<float> RemotePitch;    // degrees, negative = down
 
@@ -53,17 +57,21 @@ public class FlashlightPlugin : BaseUnityPlugin
         BeamIntensity = Config.Bind("Flashlight", "BeamIntensity", 0.35f,
             "Volumetric cone opacity (0 = invisible cone, 1 = very solid).");
 
+        ShowModel = Config.Bind("Flashlight", "ShowModel", true,
+            "Show the 3D flashlight held in your paw (and other players' paws).");
+        ModelScale = Config.Bind("Flashlight", "ModelScale", 1f,
+            "Flashlight model size multiplier.");
+        RemoteRight = Config.Bind("Placement", "RemoteRight", 0.12f,
+            "Other players' flashlight: extra sideways offset from the paw anchor, in meters.");
+        RemoteForward = Config.Bind("Placement", "RemoteForward", 0.05f,
+            "Other players' flashlight: extra forward offset from the paw anchor, in meters.");
+
         LocalRight = Config.Bind("Placement", "LocalRight", 0.35f,
             "Beam origin offset to the right of your camera, in meters (simulates holding it in your paw).");
         LocalDown = Config.Bind("Placement", "LocalDown", 0.12f,
             "Beam origin offset below your camera, in meters.");
         LocalForward = Config.Bind("Placement", "LocalForward", 0.28f,
             "Beam origin offset in front of your camera, in meters.");
-
-        RemoteHeight = Config.Bind("Placement", "RemoteHeight", 0.4f,
-            "Other players' beam origin: fraction of body height above the model center.");
-        RemoteForward = Config.Bind("Placement", "RemoteForward", 0.35f,
-            "Other players' beam origin: meters in front of the model center.");
         RemoteYaw = Config.Bind("Placement", "RemoteYaw", 0f,
             "Other players' beam yaw offset in degrees (use 180 if the beam points backwards).");
         RemotePitch = Config.Bind("Placement", "RemotePitch", -5f,
