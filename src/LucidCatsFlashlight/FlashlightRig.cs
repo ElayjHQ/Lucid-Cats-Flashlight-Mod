@@ -27,6 +27,12 @@ public class FlashlightRig : MonoBehaviour
     private Renderer[] _ownShadowRenderers;
     private UnityEngine.Rendering.ShadowCastingMode[] _originalShadowModes;
 
+    // Battery: local players simulate; remotes receive the level by network.
+    private float _baseIntensity;
+    private float _baseBeamIntensity;
+    private float _batteryLevel = 1f;
+    private AudioSource _static;
+
     public void Init(PlayerManager player)
     {
         Player = player;
@@ -85,6 +91,7 @@ public class FlashlightRig : MonoBehaviour
         _spot.type = LightType.Spot;
         _spot.color = new Color(1f, 0.93f, 0.8f); // warm white
         _spot.intensity = FlashlightPlugin.Intensity.Value;
+        _baseIntensity = _spot.intensity;
         _spot.range = FlashlightPlugin.Range.Value;
         _spot.spotAngle = Mathf.Clamp(FlashlightPlugin.Angle.Value, 10f, 120f);
         _spot.innerSpotAngle = _spot.spotAngle * 0.65f;
@@ -109,6 +116,25 @@ public class FlashlightRig : MonoBehaviour
             FlashlightSound.LoadAsync(this);
         }
 
+        // Low-battery static: a quiet looping crackle while the light drains.
+        // Spatialized like the clicks, so friends hear your torch sputtering too.
+        if (FlashlightPlugin.Sound.Value && FlashlightPlugin.LowStatic.Value)
+        {
+            var staticClip = FlashlightStatic.GetClip();
+            if (staticClip != null)
+            {
+                _static = gameObject.AddComponent<AudioSource>();
+                _static.playOnAwake = false;
+                _static.loop = true;
+                _static.clip = staticClip;
+                _static.spatialBlend = 1f;
+                _static.rolloffMode = AudioRolloffMode.Linear;
+                _static.minDistance = 1.5f;
+                _static.maxDistance = 12f;
+                _static.volume = 0f;
+            }
+        }
+
         // Volumetric cone using the game's own VLB asset. Best-effort: if it fails,
         // the plain spotlight still works. Tuned subtle so the camera doesn't sit
         // inside a giant white dome.
@@ -121,6 +147,7 @@ public class FlashlightRig : MonoBehaviour
                 _beam.coneRadiusStart = 0.05f;           // narrow throat, less near-camera shell
                 _beam.intensityFromLight = false;        // decouple cone opacity from light power
                 _beam.intensityGlobal = Mathf.Clamp01(FlashlightPlugin.BeamIntensity.Value);
+                _baseBeamIntensity = _beam.intensityGlobal;
                 _beam.intensityInside = 1f;
                 _beam.intensityOutside = 0.4f;
                 _beam.glareFrontal = 0f;
@@ -208,6 +235,104 @@ public class FlashlightRig : MonoBehaviour
                     _sound.PlayOneShot(clip);
                 }
             }
+        }
+    }
+
+    /// <summary>True while this player is inside a dream (game's own sleep system).</summary>
+    private bool Dreaming()
+    {
+        return Player != null && Player.SleepManager != null && Player.SleepManager.IsDreaming;
+    }
+
+    /// <summary>The game's lucidity, normalized to 0-1 (1 when unavailable).</summary>
+    private float LucidityNorm()
+    {
+        var lucidity = Player != null ? Player.LucidityManager : null;
+        return lucidity != null ? Mathf.Clamp01(lucidity.currentLucidity.Value / 100f) : 1f;
+    }
+
+    /// <summary>Networked battery level for a remote rig (0-255 byte from its owner).</summary>
+    public void SetBattery(byte level)
+    {
+        _batteryLevel = level / 255f;
+    }
+
+    /// <summary>Dead-battery feedback: a quiet click, but no light.</summary>
+    public void PlayDeadClick()
+    {
+        if (!FlashlightPlugin.Sound.Value || _sound == null ||
+            !FlashlightSound.TryGetClips(out var openClip, out var closeClip))
+        {
+            return;
+        }
+
+        var clip = closeClip != null ? closeClip : openClip;
+        if (clip != null)
+        {
+            _sound.volume = FlashlightPlugin.Volume.Value * 0.5f;
+            _sound.PlayOneShot(clip);
+        }
+    }
+
+    private void Update()
+    {
+        // Local players tick the battery simulation; remotes render the level
+        // that arrived through the network messages.
+        if (IsLocal)
+        {
+            FlashlightBattery.Tick(Time.deltaTime, _lastOn, Dreaming(), LucidityNorm());
+            _batteryLevel = FlashlightBattery.Level;
+        }
+
+        // Battery-driven brightness: the light dims and flickers as it dies.
+        float brightness = FlashlightBattery.Brightness(
+            _batteryLevel, FlashlightPlugin.LowThreshold.Value);
+        if (_spot != null && _spot.enabled)
+        {
+            _spot.intensity = _baseIntensity * brightness;
+        }
+
+        if (_beam != null && !_beamBroken && _beam.enabled)
+        {
+            _beam.intensityGlobal = Mathf.Clamp01(_baseBeamIntensity * Mathf.Max(brightness, 0.04f));
+        }
+
+        if (_viewModel != null)
+        {
+            _viewModel.ApplyBattery(brightness);
+        }
+
+        UpdateStatic();
+    }
+
+    /// <summary>
+    /// Static crackle while a low battery drains: only while the light is ON
+    /// (dying-torch sputter), louder the emptier it gets, silent once it dies
+    /// or is switched off. Remote rigs crackle too, via the synced level.
+    /// </summary>
+    private void UpdateStatic()
+    {
+        if (_static == null)
+        {
+            return;
+        }
+
+        float lowThreshold = FlashlightPlugin.LowThreshold.Value;
+        bool low = _lastOn && FlashlightBattery.Enabled && _batteryLevel < lowThreshold;
+        if (low)
+        {
+            if (!_static.isPlaying)
+            {
+                _static.Play();
+            }
+
+            // Silence just under the threshold, full crackle at dead.
+            float severity = 1f - Mathf.Clamp01(_batteryLevel / Mathf.Max(0.01f, lowThreshold));
+            _static.volume = FlashlightPlugin.Volume.Value * 0.5f * (0.3f + 0.7f * severity);
+        }
+        else if (_static.isPlaying)
+        {
+            _static.Stop();
         }
     }
 

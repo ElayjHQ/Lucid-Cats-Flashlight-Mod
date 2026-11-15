@@ -24,6 +24,10 @@ public class FlashlightViewModel : MonoBehaviour
     private bool _targetOn;
     private float _animGlow = 1f;
 
+    // Battery dimming (set by the rig every frame: local sim or networked level).
+    private float _batteryBrightness = 1f;
+    private Color _lensBaseColor = Color.white;
+
     private bool _isLocal;
     private Game.Player.PlayerManager _player;
     private Transform _cam;
@@ -67,7 +71,8 @@ public class FlashlightViewModel : MonoBehaviour
 
         var bodyMat = MakeMaterial(new Color(0.13f, 0.13f, 0.15f), 0.65f, 0.7f);
         var ringMat = MakeMaterial(new Color(0.07f, 0.07f, 0.08f), 0.4f, 0.6f);
-        _lensMaterial = MakeMaterial(new Color(2.2f, 1.8f, 1.1f), 0f, 0f, emissive: true);
+        _lensBaseColor = new Color(2.2f, 1.8f, 1.1f);
+        _lensMaterial = MakeMaterial(_lensBaseColor, 0f, 0f, emissive: true);
 
         // All parts point down +Z of the rig (same direction the light shines).
         Part(_float, bodyMat, radius: 0.032f, length: 0.19f, z: 0.010f);             // body
@@ -90,6 +95,16 @@ public class FlashlightViewModel : MonoBehaviour
 
     /// <summary>Transform at the lens face; the rig mounts its light here.</summary>
     public Transform LensTip { get; private set; }
+
+    /// <summary>
+    /// Battery-driven brightness multiplier (from the rig: local simulation for
+    /// the local player, the networked level byte for remotes). Dims the glow
+    /// and the lens emissive as the battery dies.
+    /// </summary>
+    public void ApplyBattery(float brightness)
+    {
+        _batteryBrightness = Mathf.Clamp01(brightness);
+    }
 
     // ------------------------------------------------------------ effects
 
@@ -356,11 +371,27 @@ public class FlashlightViewModel : MonoBehaviour
             Mathf.Sin(_phase * 0.5f) * 2.5f,
             Mathf.Sin(_phase * 0.8f) * 1.5f);
 
-        // Glow pulse (scaled by the toggle animation).
+        // Glow pulse (scaled by the toggle animation and the battery).
         if (_glow != null)
         {
             _glow.intensity = FlashlightPlugin.GlowIntensity.Value *
-                (0.82f + 0.18f * Mathf.Sin(_phase * 2.1f)) * _animGlow;
+                (0.82f + 0.18f * Mathf.Sin(_phase * 2.1f)) * _animGlow * _batteryBrightness;
+        }
+
+        // Lens emissive follows the battery too: the torch visibly dulls as it
+        // dies, and flickers with it when nearly empty.
+        if (_lensMaterial != null)
+        {
+            var lit = _lensBaseColor * Mathf.Max(_batteryBrightness, 0.06f) * _animGlow;
+            if (_lensMaterial.HasProperty("_EmissionColor"))
+            {
+                _lensMaterial.SetColor("_EmissionColor", lit);
+            }
+
+            if (_lensMaterial.HasProperty("_BaseColor"))
+            {
+                _lensMaterial.SetColor("_BaseColor", lit);
+            }
         }
 
         // Sway only for the local player: the flashlight lags slightly behind the

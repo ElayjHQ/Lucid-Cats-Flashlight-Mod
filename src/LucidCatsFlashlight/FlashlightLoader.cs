@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Game.Player;
@@ -22,8 +23,9 @@ public class FlashlightLoader : MonoBehaviour
     private const string MsgState = "lucidcats.flashlight.state";
     private const string MsgSync = "lucidcats.flashlight.sync";
 
-    // Last known flashlight state per player (survives scene changes / respawns)
-    private readonly Dictionary<ulong, bool> _states = new();
+    // Last known flashlight state per player (survives scene changes / respawns).
+    // The battery byte rides along so friends see each other's torch dying.
+    private readonly Dictionary<ulong, (bool On, byte Battery)> _states = new();
     private readonly Dictionary<ulong, FlashlightRig> _rigs = new();
 
     private NetworkManager _nm;
@@ -31,12 +33,45 @@ public class FlashlightLoader : MonoBehaviour
     private bool _wasListening;
     private bool _syncRequested;
     private float _nextMaintenance;
+    private float _nextBatterySend;
+
+    // Rebindable flashlight key: a keyboard key or a mouse button.
+    private const float RebindHoldSeconds = 2f;
+    private Key _toggleKey = Key.F;
+    private int _mouseButton = -1; // 0=left, 1=right, 2=middle, 3=side-forward, 4=side-back
+    private bool _rebinding;
+    private float _holdStartedAt;
+    private bool _rebindPrompted;
+
+    private void Awake()
+    {
+        ParseToggleKey();
+    }
+
+    private void ParseToggleKey()
+    {
+        string raw = FlashlightPlugin.ToggleKey != null ? FlashlightPlugin.ToggleKey.Value : null;
+        if (string.IsNullOrWhiteSpace(raw) || !TryParseInput(raw, out Key key, out int mouse) ||
+            (key == Key.None && mouse < 0))
+        {
+            FlashlightPlugin.Log.LogWarning(
+                $"Could not parse ToggleKey '{raw}'; falling back to F.");
+            _toggleKey = Key.F;
+            _mouseButton = -1;
+            return;
+        }
+
+        _toggleKey = key;
+        _mouseButton = mouse;
+    }
 
     private void Update()
     {
         HandleInput();
         EnsureNetHooks();
         MaintainSession();
+        UpdateBatteryNetwork();
+        FlashlightSettingsTab.Tick(this);
 
         if (Time.unscaledTime >= _nextMaintenance)
         {
@@ -45,11 +80,48 @@ public class FlashlightLoader : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Battery-driven network traffic for the local player: shuts the light off
+    /// through the normal sync path when the battery dies, and keeps friends
+    /// seeing the drain with a level update about once a second.
+    /// </summary>
+    private void UpdateBatteryNetwork()
+    {
+        var nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening || !FlashlightBattery.Enabled)
+        {
+            return;
+        }
+
+        ulong id = nm.LocalClientId;
+        bool on = _states.TryGetValue(id, out var s) && s.On;
+
+        if (on && FlashlightBattery.Level <= 0.0005f)
+        {
+            // Dead mid-use: normal off state, so the close click plays and
+            // friends see the torch dissolve.
+            ApplyState(id, false, FlashlightBattery.ToByte());
+            SendLocalState(id, false);
+            FlashlightPlugin.Log.LogInfo("Battery dead; flashlight switched off.");
+            return;
+        }
+
+        if (on && Time.unscaledTime >= _nextBatterySend)
+        {
+            SendLocalState(id, true);
+        }
+    }
+
     private void HandleInput()
     {
         var keyboard = Keyboard.current;
-        if (keyboard == null || !keyboard.fKey.wasPressedThisFrame)
+        var mouse = Mouse.current;
+
+        // Rebind capture keeps running outside gameplay, so a half-finished
+        // rebind always resolves (Esc cancels).
+        if (_rebinding)
         {
+            CaptureRebindKey(keyboard, mouse);
             return;
         }
 
@@ -60,13 +132,177 @@ public class FlashlightLoader : MonoBehaviour
             return;
         }
 
-        try
+        bool pressedThisFrame = false;
+        bool isPressed = false;
+        if (_mouseButton >= 0 && mouse != null)
         {
-            ToggleLocal();
+            var button = MouseButtonControl(mouse, _mouseButton);
+            if (button != null)
+            {
+                pressedThisFrame = button.wasPressedThisFrame;
+                isPressed = button.isPressed;
+            }
         }
-        catch (System.Exception e)
+        else if (keyboard != null)
         {
-            FlashlightPlugin.Log.LogError($"Toggle failed: {e}");
+            var keyControl = keyboard[_toggleKey];
+            if (keyControl != null)
+            {
+                pressedThisFrame = keyControl.wasPressedThisFrame;
+                isPressed = keyControl.isPressed;
+            }
+        }
+
+        if (pressedThisFrame)
+        {
+            _holdStartedAt = Time.unscaledTime;
+            _rebindPrompted = false;
+
+            try
+            {
+                ToggleLocal();
+            }
+            catch (Exception e)
+            {
+                FlashlightPlugin.Log.LogError($"Toggle failed: {e}");
+            }
+        }
+
+        // Holding the flashlight key for two seconds enters rebind mode.
+        if (isPressed && !_rebindPrompted &&
+            Time.unscaledTime - _holdStartedAt >= RebindHoldSeconds)
+        {
+            _rebindPrompted = true;
+            StartRebind();
+        }
+    }
+
+    // ---------------------------------------------------------------- rebinding
+
+    /// <summary>Name of the current flashlight key (shown in the settings card).</summary>
+    public string CurrentKeyName => _mouseButton >= 0 ? MouseButtonName(_mouseButton) : _toggleKey.ToString();
+
+    /// <summary>Starts the rebind flow from the settings menu's Change button.</summary>
+    public void BeginRebindFromUi()
+    {
+        if (!_rebinding)
+        {
+            StartRebind();
+        }
+    }
+
+    private void StartRebind()
+    {
+        _rebinding = true;
+        FlashlightPrompt.Show(
+            $"Press any keyboard key or mouse button to bind the flashlight...\n(Currently: {CurrentKeyName}  |  Esc to cancel)");
+        FlashlightPlugin.Log.LogInfo("Rebinding the flashlight key: press a key or mouse button (Esc to cancel).");
+    }
+
+    private void CaptureRebindKey(Keyboard keyboard, Mouse mouse)
+    {
+        if (keyboard != null && keyboard.escapeKey.wasPressedThisFrame)
+        {
+            CancelRebind();
+            return;
+        }
+
+        if (keyboard != null)
+        {
+            foreach (var keyControl in keyboard.allKeys)
+            {
+                if (keyControl == null || keyControl.keyCode == Key.None || !keyControl.wasPressedThisFrame)
+                {
+                    continue;
+                }
+
+                ApplyNewKey(keyControl.keyCode.ToString());
+                return;
+            }
+        }
+
+        if (mouse != null)
+        {
+            for (int i = 0; i < MouseButtons; i++)
+            {
+                var button = MouseButtonControl(mouse, i);
+                if (button != null && button.wasPressedThisFrame)
+                {
+                    ApplyNewKey(MouseButtonName(i));
+                    return;
+                }
+            }
+        }
+    }
+
+    private void ApplyNewKey(string keyName)
+    {
+        if (string.IsNullOrWhiteSpace(keyName) || !TryParseInput(keyName, out Key key, out int mouse) ||
+            (key == Key.None && mouse < 0))
+        {
+            CancelRebind();
+            return;
+        }
+
+        _toggleKey = key;
+        _mouseButton = mouse;
+        if (FlashlightPlugin.ToggleKey != null)
+        {
+            FlashlightPlugin.ToggleKey.Value = keyName.Trim();
+            FlashlightPlugin.SaveConfig();
+        }
+
+        _rebinding = false;
+        FlashlightPrompt.Hide();
+        FlashlightPlugin.Log.LogInfo($"Flashlight toggle rebound to {keyName}.");
+    }
+
+    private void CancelRebind()
+    {
+        _rebinding = false;
+        FlashlightPrompt.Hide();
+        FlashlightPlugin.Log.LogInfo("Rebind cancelled; keeping the current key.");
+    }
+
+    // ---------------------------------------------------------- keyboard/mouse input
+
+    private const int MouseButtons = 5; // left, right, middle, side-forward, side-back
+
+    private static string MouseButtonName(int index) => index switch
+    {
+        0 => "LeftMouse",
+        1 => "RightMouse",
+        2 => "MiddleMouse",
+        3 => "Mouse4",
+        4 => "Mouse5",
+        _ => "F",
+    };
+
+    private static UnityEngine.InputSystem.Controls.ButtonControl MouseButtonControl(Mouse mouse, int index) => index switch
+    {
+        0 => mouse.leftButton,
+        1 => mouse.rightButton,
+        2 => mouse.middleButton,
+        3 => mouse.forwardButton,
+        4 => mouse.backButton,
+        _ => null,
+    };
+
+    private static bool TryParseInput(string raw, out Key key, out int mouse)
+    {
+        key = Key.None;
+        mouse = -1;
+        switch (raw.Trim().ToLowerInvariant())
+        {
+            case "leftmouse": mouse = 0; return true;
+            case "rightmouse": mouse = 1; return true;
+            case "middlemouse": mouse = 2; return true;
+            case "mouse4":
+            case "sideforward": mouse = 3; return true;
+            case "mouse5":
+            case "sideback": mouse = 4; return true;
+            default:
+                return Enum.TryParse(raw.Trim(), ignoreCase: true, out key) && key != Key.None;
         }
     }
 
@@ -86,22 +322,48 @@ public class FlashlightLoader : MonoBehaviour
         }
 
         ulong id = nm.LocalClientId;
-        bool newState = !(_states.TryGetValue(id, out var cur) && cur);
+        bool currentState = _states.TryGetValue(id, out var cur) && cur.On;
+        bool newState = !currentState;
 
-        ApplyState(id, newState);
+        // Dead battery: a quiet click, but no light. While any charge remains,
+        // short bursts are allowed - it just dies mid-use again.
+        if (newState && !FlashlightBattery.CanTurnOn)
+        {
+            _rigs.TryGetValue(id, out var rig);
+            rig?.PlayDeadClick();
+            FlashlightPlugin.Log.LogDebug("F pressed but the battery is dead.");
+            return;
+        }
 
+        ApplyState(id, newState, FlashlightBattery.ToByte());
+        SendLocalState(id, newState);
+
+        FlashlightPlugin.Log.LogInfo($"Flashlight {(newState ? "ON" : "OFF")} (battery {FlashlightBattery.Level:P0})");
+    }
+
+    /// <summary>
+    /// Sends the local player's current state to the host (clients) or straight
+    /// to everyone (host). Used by toggles AND the periodic battery updates.
+    /// </summary>
+    private void SendLocalState(ulong id, bool on)
+    {
+        var nm = NetworkManager.Singleton;
+        if (nm == null || !nm.IsListening)
+        {
+            return;
+        }
+
+        _nextBatterySend = Time.unscaledTime + 1f;
         if (nm.IsHost)
         {
-            BroadcastState(id, newState);
+            BroadcastState(id, on, FlashlightBattery.ToByte());
         }
         else
         {
             using var writer = new FastBufferWriter(16, Allocator.Temp);
-            WriteState(writer, id, newState);
+            WriteState(writer, id, on, FlashlightBattery.ToByte());
             nm.CustomMessagingManager.SendNamedMessage(MsgState, NetworkManager.ServerClientId, writer, NetworkDelivery.Reliable);
         }
-
-        FlashlightPlugin.Log.LogInfo($"Flashlight {(newState ? "ON" : "OFF")}");
     }
 
     private static PlayerManager GetLocalPlayer()
@@ -164,6 +426,7 @@ public class FlashlightLoader : MonoBehaviour
             _states.Clear();
             _rigs.Clear();
             _syncRequested = false;
+            FlashlightBattery.ForgetSession();
             FlashlightPlugin.Log.LogInfo("Session ended; flashlight state reset.");
         }
 
@@ -197,7 +460,7 @@ public class FlashlightLoader : MonoBehaviour
                 return;
             }
 
-            ReadState(reader, out var targetId, out var on);
+            ReadState(reader, out var targetId, out var on, out var battery);
 
             if (nm.IsHost)
             {
@@ -209,14 +472,14 @@ public class FlashlightLoader : MonoBehaviour
                     return;
                 }
 
-                // A client toggled their light: apply it, then relay to everyone.
+                // A client toggled / updated their light: apply it, then relay to everyone.
                 targetId = sender;
-                ApplyState(targetId, on);
-                BroadcastState(targetId, on);
+                ApplyState(targetId, on, battery);
+                BroadcastState(targetId, on, battery);
             }
             else
             {
-                ApplyState(targetId, on); // relayed by the host
+                ApplyState(targetId, on, battery); // relayed by the host
             }
         }
         catch (System.Exception e)
@@ -254,8 +517,8 @@ public class FlashlightLoader : MonoBehaviour
                 reader.ReadValueSafe(out int count, default(FastBufferWriter.ForPrimitives));
                 for (int i = 0; i < count; i++)
                 {
-                    ReadState(reader, out var id, out var on);
-                    ApplyState(id, on);
+                    ReadState(reader, out var id, out var on, out var battery);
+                    ApplyState(id, on, battery);
                 }
 
                 FlashlightPlugin.Log.LogInfo($"Received flashlight state dump ({count} player(s)).");
@@ -267,7 +530,7 @@ public class FlashlightLoader : MonoBehaviour
         }
     }
 
-    private void BroadcastState(ulong id, bool on)
+    private void BroadcastState(ulong id, bool on, byte battery)
     {
         if (_nm == null || !_nm.IsListening)
         {
@@ -275,7 +538,7 @@ public class FlashlightLoader : MonoBehaviour
         }
 
         using var writer = new FastBufferWriter(16, Allocator.Temp);
-        WriteState(writer, id, on);
+        WriteState(writer, id, on, battery);
         _nm.CustomMessagingManager.SendNamedMessageToAll(MsgState, writer, NetworkDelivery.Reliable);
     }
 
@@ -294,37 +557,68 @@ public class FlashlightLoader : MonoBehaviour
         foreach (var pair in _states)
         {
             ulong id = pair.Key;
-            byte on = pair.Value ? (byte)1 : (byte)0;
+            byte on = pair.Value.On ? (byte)1 : (byte)0;
+            byte bat = pair.Value.Battery;
             writer.WriteValueSafe(in id, default(FastBufferWriter.ForPrimitives));
             writer.WriteValueSafe(in on, default(FastBufferWriter.ForPrimitives));
+            writer.WriteValueSafe(in bat, default(FastBufferWriter.ForPrimitives));
         }
 
         messaging.SendNamedMessage(MsgSync, clientId, writer, NetworkDelivery.Reliable);
     }
 
-    private static void WriteState(FastBufferWriter writer, ulong id, bool on)
+    private static void WriteState(FastBufferWriter writer, ulong id, bool on, byte battery)
     {
         ulong targetId = id;
         byte flag = on ? (byte)1 : (byte)0;
         writer.WriteValueSafe(in targetId, default(FastBufferWriter.ForPrimitives));
         writer.WriteValueSafe(in flag, default(FastBufferWriter.ForPrimitives));
+        writer.WriteValueSafe(in battery, default(FastBufferWriter.ForPrimitives));
     }
 
-    private static void ReadState(FastBufferReader reader, out ulong id, out bool on)
+    private static bool _warnedOldFormat;
+
+    private static void ReadState(FastBufferReader reader, out ulong id, out bool on, out byte battery)
     {
         reader.ReadValueSafe(out id, default(FastBufferWriter.ForPrimitives));
         reader.ReadValueSafe(out byte flag, default(FastBufferWriter.ForPrimitives));
+        // v1.1.0 peers send the old format without the battery byte. Accept
+        // their messages and treat their light as full (they have no battery),
+        // so toggle sync still works in mixed-version lobbies.
+        if (reader.TryBeginRead(1))
+        {
+            reader.ReadValueSafe(out battery, default(FastBufferWriter.ForPrimitives));
+        }
+        else
+        {
+            battery = byte.MaxValue;
+            if (!_warnedOldFormat)
+            {
+                _warnedOldFormat = true;
+                FlashlightPlugin.Log.LogWarning(
+                    "Received an old-format flashlight message (a v1.1.0 peer). " +
+                    "Toggle sync will work, but that player has no battery - " +
+                    "everyone should update to the same mod version.");
+            }
+        }
+
         on = flag != 0;
     }
 
     // ---------------------------------------------------------------- rigs
 
-    private void ApplyState(ulong id, bool on)
+    private void ApplyState(ulong id, bool on, byte battery)
     {
-        _states[id] = on;
+        _states[id] = (on, battery);
         if (_rigs.TryGetValue(id, out var rig) && rig != null)
         {
             rig.SetOn(on);
+            if (!rig.IsLocal)
+            {
+                // Remote rigs render the owner's battery level; local rigs use
+                // their own simulation.
+                rig.SetBattery(battery);
+            }
         }
     }
 
@@ -382,7 +676,13 @@ public class FlashlightLoader : MonoBehaviour
                 }
 
                 // Keep rig visuals in sync with known state + spectating.
-                rig.SetOn(_states.TryGetValue(id, out var s) && s);
+                var state = _states.TryGetValue(id, out var s) ? s : default;
+                rig.SetOn(state.On);
+                if (!rig.IsLocal)
+                {
+                    rig.SetBattery(state.Battery);
+                }
+
                 rig.gameObject.SetActive(player.SleepManager == null || !player.SleepManager.IsSpectating);
             }
         }
@@ -428,6 +728,11 @@ public class FlashlightLoader : MonoBehaviour
         var rig = rigGo.AddComponent<FlashlightRig>();
         rig.Init(player);
         rig.HandAttached = attached;
+        if (isLocal)
+        {
+            FlashlightHud.EnsureCreated();
+        }
+
         FlashlightPlugin.Log.LogDebug($"Rig created for {(isLocal ? "local" : "remote")} player {player.OwnerClientId}.");
         return rig;
     }

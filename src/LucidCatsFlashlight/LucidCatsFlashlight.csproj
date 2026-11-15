@@ -6,10 +6,10 @@
     <RootNamespace>LucidCatsFlashlight</RootNamespace>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
-    <DebugType>none</DebugType>
+    <DebugType>portable</DebugType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <!-- Where Lucid Cats is installed. Override with the LUCID_CATS_DIR environment
          variable or /p:GameDir="..." if the game lives somewhere else. -->
     <GameDir Condition="'$(GameDir)' == ''">$([System.Environment]::GetEnvironmentVariable('LUCID_CATS_DIR'))</GameDir>
@@ -44,6 +44,22 @@
     </Reference>
     <Reference Include="UnityEngine.ParticleSystemModule">
       <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.ParticleSystemModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\Unity.TextMeshPro.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.AudioModule">
@@ -84,6 +100,10 @@
     </Reference>
     <Reference Include="HaniUtils.Gameplay">
       <HintPath>$(GameDir)\LucidCats_Data\Managed\HaniUtils.Gameplay.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="HaniUtils.UI.Tween">
+      <HintPath>$(GameDir)\LucidCats_Data\Managed\HaniUtils.UI.Tween.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

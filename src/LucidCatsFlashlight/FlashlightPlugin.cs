@@ -11,9 +11,11 @@ public class FlashlightPlugin : BaseUnityPlugin
 {
     public const string PluginGuid = "lucidcats.flashlight";
     public const string PluginName = "Lucid Cats Flashlight";
-    public const string PluginVersion = "1.1.0";
+    public const string PluginVersion = "1.2.0";
 
     internal static ManualLogSource Log;
+
+    private static ConfigFile _configFile;
 
     // Light appearance
     internal static ConfigEntry<bool> BeamEnabled;
@@ -36,6 +38,19 @@ public class FlashlightPlugin : BaseUnityPlugin
     internal static ConfigEntry<float> GlowIntensity;
     internal static ConfigEntry<float> RemoteRight;
 
+    // Controls
+    internal static ConfigEntry<string> ToggleKey;
+
+    // Battery system
+    internal static ConfigEntry<bool> Battery;
+    internal static ConfigEntry<float> BatteryLife;
+    internal static ConfigEntry<float> RechargeTime;
+    internal static ConfigEntry<float> LowThreshold;
+    internal static ConfigEntry<bool> ShowBatteryHud;
+    internal static ConfigEntry<float> HudScale;
+    internal static ConfigEntry<bool> LowStatic;
+    internal static ConfigEntry<float> LucidLock;
+
     // Your held flashlight, in camera space
     internal static ConfigEntry<float> LocalRight;
     internal static ConfigEntry<float> LocalDown;
@@ -50,6 +65,7 @@ public class FlashlightPlugin : BaseUnityPlugin
     private void Awake()
     {
         Log = Logger;
+        _configFile = Config;
 
         BeamEnabled = Config.Bind("Flashlight", "Beam", true,
             "Show the visible volumetric beam cone. Set false for a plain spotlight look.");
@@ -89,6 +105,26 @@ public class FlashlightPlugin : BaseUnityPlugin
             "Floating flashlight offset in front of your camera, in meters.");
         LocalYaw = Config.Bind("Placement", "LocalYaw", -6f,
             "Floating flashlight aim in degrees (negative = toward the screen centre).");
+        ToggleKey = Config.Bind("Controls", "ToggleKey", "F",
+            "Key or mouse button that toggles the flashlight (e.g. F, G, LeftShift, Space, MiddleMouse, Mouse4). Hold the current key for 2 seconds in-game to rebind without editing this file.");
+
+        Battery = Config.Bind("Battery", "Enabled", true,
+            "Battery system: the flashlight drains while lit and recharges while off.");
+        BatteryLife = Config.Bind("Battery", "LifeSeconds", 40f,
+            "Seconds of continuous light on a full battery.");
+        RechargeTime = Config.Bind("Battery", "RechargeSeconds", 60f,
+            "Seconds to fully recharge while the flashlight is off.");
+        LowThreshold = Config.Bind("Battery", "LowThreshold", 0.25f,
+            "Charge level where the light starts dimming (0-1).");
+        ShowBatteryHud = Config.Bind("Battery", "ShowHud", true,
+            "Show the small battery bar at the bottom of the screen.");
+        HudScale = Config.Bind("Battery", "HudScale", 1f,
+            "Battery HUD bar size multiplier (1 = default 150x20 px).");
+        LowStatic = Config.Bind("Battery", "LowStatic", true,
+            "Quiet static crackle while a low battery drains (respects the master Sound toggle).");
+        LucidLock = Config.Bind("Battery", "LucidLock", 0.30f,
+            "Lock the flashlight off while dreaming and lucidity is at or below this level (0-1, 0 = off). Unlocks when the player wakes up.");
+
         RemoteYaw = Config.Bind("Placement", "RemoteYaw", 0f,
             "Other players' beam yaw offset in degrees (use 180 if the beam points backwards).");
         RemotePitch = Config.Bind("Placement", "RemotePitch", -5f,
@@ -98,6 +134,21 @@ public class FlashlightPlugin : BaseUnityPlugin
         Object.DontDestroyOnLoad(loader);
         loader.AddComponent<FlashlightLoader>();
 
-        Log.LogInfo($"{PluginName} v{PluginVersion} loaded. Press F in-game to toggle your flashlight.");
+        Log.LogInfo($"{PluginName} v{PluginVersion} loaded. Press {ToggleKey.Value} in-game to toggle your flashlight.");
+    }
+
+    internal static void SaveConfig()
+    {
+        try
+        {
+            if (_configFile != null)
+            {
+                _configFile.Save();
+            }
+        }
+        catch (System.Exception e)
+        {
+            Log.LogWarning($"Could not save config: {e.Message}");
+        }
     }
 }
